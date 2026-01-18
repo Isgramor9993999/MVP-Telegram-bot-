@@ -20,10 +20,12 @@ def reply_menu() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text="🎁 Trial"),
                 KeyboardButton(text="💳 Купить"),
+                KeyboardButton(text="👩‍👦‍👦 Реф. программа"),
             ],
             [
                 KeyboardButton(text="ℹ️ Статус"),
                 KeyboardButton(text="🔁 Inline меню"),
+                KeyboardButton(text="🆘 Помощь"),
             ],
         ],
         resize_keyboard=True,
