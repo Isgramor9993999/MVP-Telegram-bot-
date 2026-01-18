@@ -3,9 +3,9 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-
 from config import BOT_TOKEN
 from handlers import register_all_handlers
+from states import BuyStates
 from payments.yookassa import create_payment, check_payment_status
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
