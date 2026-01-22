@@ -6,8 +6,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from config import BOT_TOKEN
 from handlers import register_all_handlers
 from states import BuyStates
-
+from scheduler import subscription_scheduler
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(levelname)s | %(message)s")
+asyncio.create_task(subscription_scheduler())
+
+
+
 
 
 async def main():

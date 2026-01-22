@@ -1,135 +1,75 @@
-"""YooKassa payment adapter (sandbox/test-ready).
-
-This module provides a small wrapper around the `yookassa` SDK to create
-and check test payments. Credentials are read from environment variables
-so no secrets are stored in code. Example variables (place in `.env`):
-
-YOOKASSA_SHOP_ID=your_shop_id
-YOOKASSA_SECRET=your_secret_key
-
-Notes:
- - Use YooKassa test credentials (sandbox) for testing payments.
- - The `create_payment` function returns a dict containing payment id,
-   status and confirmation information (if available).
-"""
-
-from __future__ import annotations
+# payments_yookassa.py
+#Создаёт платёж YooKassa
+#Обрабатывает webhook
+#Уведомляет пользователя
+#Даёт администратору статистику за день / месяц / всё время
 
 import os
-from typing import Dict, Optional
-
-from dotenv import load_dotenv
+import uuid
+from datetime import datetime, timedelta
 from yookassa import Configuration, Payment
+from aiogram import Router, Bot
+from aiogram.types import Message
+from sqlalchemy import select, func
+from db import PaymentModel, async_session
 
+Configuration.account_id = os.getenv("YOOKASSA_SHOP_ID")
+Configuration.secret_key = os.getenv("YOOKASSA_SECRET_KEY")
 
-# Load environment variables from .env if present
-load_dotenv()
+router = Router()
 
-# Read credentials from env (do NOT hardcode secrets)
-YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID")
-YOOKASSA_SECRET = os.getenv("YOOKASSA_SECRET")
-
-if not (YOOKASSA_SHOP_ID and YOOKASSA_SECRET):
-    # We don't raise here because in some contexts user may only import the module.
-    # Functions will raise if credentials are missing at call time.
-    Configuration.account_id = None
-    Configuration.secret_key = None
-else:
-    Configuration.account_id = YOOKASSA_SHOP_ID
-    Configuration.secret_key = YOOKASSA_SECRET
-
-
-def _ensure_configured() -> None:
-    if not (Configuration.account_id and Configuration.secret_key):
-        raise RuntimeError("YOOKASSA_SHOP_ID and YOOKASSA_SECRET must be set in environment")
-
-
-def create_payment(
-    amount: float,
-    currency: str = "RUB",
-    description: str = "Payment",
-    return_url: Optional[str] = None,
-    metadata: Optional[Dict[str, str]] = None,
-    capture: bool = True,
-) -> Dict:
-    """Create a payment in YooKassa (test/sandbox ready).
-
-    Returns a dictionary with keys: id, status, amount, currency, confirmation
-    (may include confirmation.url), and raw (the SDK Payment object as dict).
-    """
-    _ensure_configured()
-
-    amount_value = f"{amount:.2f}"
-    payload = {
-        "amount": {"value": amount_value, "currency": currency},
-        "confirmation": {"type": "redirect"},
-        "capture": capture,
+async def create_yookassa_payment(user_id: int, amount: int, description: str):
+    payment = Payment.create({
+        "amount": {"value": f"{amount}.00", "currency": "RUB"},
+        "confirmation": {"type": "redirect", "return_url": "https://t.me/your_bot"},
+        "capture": True,
         "description": description,
-    }
-    if return_url:
-        payload["confirmation"]["return_url"] = return_url
-    if metadata:
-        payload["metadata"] = metadata
+        "metadata": {"user_id": user_id},
+    }, uuid.uuid4())
 
-    payment = Payment.create(payload)
+    async with async_session() as session:
+        session.add(PaymentModel(
+            user_id=user_id,
+            provider="yookassa",
+            amount=amount,
+            payment_id=payment.id,
+            status="pending"
+        ))
+        await session.commit()
 
-    result = {
-        "id": getattr(payment, "id", None),
-        "status": getattr(payment, "status", None),
-        "amount": amount_value,
-        "currency": currency,
-        "confirmation": getattr(payment, "confirmation", None),
-        "raw": payment,
-    }
-    return result
+    return payment.confirmation.confirmation_url
 
+async def process_yookassa_webhook(data: dict, bot: Bot):
+    payment_id = data["object"]["id"]
+    status = data["object"]["status"]
 
-def check_payment_status(payment_id: str) -> Dict:
-    """Retrieve payment status from YooKassa by payment id.
+    if status != "succeeded":
+        return
 
-    Returns a dict with keys: id, status, paid (bool), amount, currency, raw.
-    """
-    _ensure_configured()
-    payment = Payment.find_one(payment_id)
-    amt = None
-    curr = None
-    if getattr(payment, "amount", None):
-        # Payment.amount may be an object or a dict depending on SDK version
-        if isinstance(payment.amount, dict):
-            amt = payment.amount.get("value")
-            curr = payment.amount.get("currency")
-        else:
-            amt = getattr(payment.amount, "value", None)
-            curr = getattr(payment.amount, "currency", None)
+    async with async_session() as session:
+        payment = await session.scalar(
+            select(PaymentModel).where(PaymentModel.payment_id == payment_id)
+        )
+        payment.status = "success"
+        await session.commit()
 
-    return {
-        "id": getattr(payment, "id", None),
-        "status": getattr(payment, "status", None),
-        "paid": getattr(payment, "paid", None),
-        "amount": amt,
-        "currency": curr,
-        "raw": payment,
-    }
+    await bot.send_message(
+        payment.user_id,
+        "✅ Оплата успешно получена. Услуга активирована."
+    )
 
+async def get_payments_stats(period: str):
+    now = datetime.utcnow()
+    delta = {
+        "day": timedelta(days=1),
+        "month": timedelta(days=30),
+        "all": timedelta(days=3650)
+    }[period]
 
-if __name__ == "__main__":
-    # Quick manual test (won't run during import). Replace return_url with a reachable URL
-    # when testing redirect confirmation in a browser.
-    try:
-        print("Creating test payment (1.00 RUB)...")
-        info = create_payment(1.00, description="Test payment", return_url="https://example.com/return")
-        print("Payment created:")
-        print("  id:", info.get("id"))
-        print("  status:", info.get("status"))
-        confirmation = info.get("confirmation")
-        if confirmation:
-            # SDK may return an object with dict-like access or attributes
-            if isinstance(confirmation, dict):
-                conf_url = (confirmation.get("confirmation_url")
-                            or confirmation.get("url")
-                            or (confirmation.get("confirmation") or {}).get("confirmation_url"))
-            else:
-                conf_url = getattr(confirmation, "confirmation_url", None) or getattr(confirmation, "url", None)
-            print("  confirmation url:", conf_url)
-    except Exception as e:
-        print("YooKassa test payment failed:", e)
+    async with async_session() as session:
+        result = await session.scalar(
+            select(func.sum(PaymentModel.amount))
+            .where(PaymentModel.created_at >= now - delta)
+            .where(PaymentModel.status == "success")
+        )
+    return result or 0

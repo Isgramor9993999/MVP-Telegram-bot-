@@ -1,17 +1,20 @@
 from aiogram import F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery, ReplyKeyboardRemove
-
+from keyboards.payments import user_pay_kb, admin_stats_kb
 from keyboards import inline_menu, reply_menu
 from storage import USERS
 from models import User
-
+import os
+ADMIDS = os.getenv("ADMIN_IDS")
 def register_menu_handlers(dp):
 
-    @dp.message(Command("start"))
-    async def start(message: Message):
-        USERS.setdefault(message.from_user.id, User(message.from_user.id))
-        await message.answer("Главное меню:", reply_markup=reply_menu())
+    @dp.message(commands=["start"])
+    async def cmd_start(message: Message):
+        if message.from_user.id in ADMIDS:  # ADMINS — список ID администраторов
+            await message.answer("Вы администратор. Выберите действие:", reply_markup=admin_stats_kb)
+        else:
+            await message.answer("Выберите оплату:", reply_markup=user_pay_kb)
 
     @dp.message(Command("menu"))
     async def menu(message: Message):
